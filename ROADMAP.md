@@ -83,6 +83,22 @@ consommer du web2 de façon vérifiable) et ne matche que si le prix implicite d
 croisement est dans ±N % du marché. Empêche un échange accidentel à 8× sous le prix
 et protège les utilisateurs distraits sur le `minAmountOut`.
 
+### P1.3 Annulation gasless des ordres furtifs (`cancelOrderFor`) ⏳
+Aujourd'hui un utilisateur dont l'ordre stealth est **partiellement rempli** ne peut pas
+l'annuler sans envoyer de l'ETH à son adresse furtive — ce qui brise la confidentialité
+(transfert visible on-chain liant le wallet principal à l'adresse stealth).
+Solution : pattern méta-transaction déjà établi (identique à `depositConfidentialFor`) :
+- **Contrat** : ajouter `cancelOrderFor(orderId, ownerSig)` — signature EIP-191 liant
+  `chainId + contrat + "cancelOrder" + orderId + nonce` ; le relayer appelle à la place
+  du owner, le vault vérifie la signature.
+- **Relayer** : endpoint `POST /cancel-order` — pré-estimation de gas + vérification que
+  `msg.sender != owner` autorisée par la sig, puis submit.
+- **Frontend** : bouton **"Cancel & recover remaining · Gasless"** sur les cartes
+  d'ordres stealth en statut `Partial Fill` ou `Pending`, signé par l'adresse furtive
+  (zéro popup MetaMask car signé localement avec la stealth key dérivée).
+- **Impact** : ferme le dernier trou UX du flux stealth — l'utilisateur peut toujours
+  récupérer ses fonds confidentiellement, sans jamais exposer son wallet principal.
+
 ---
 
 ## 🔷 P2 — Réalisme trading
