@@ -957,6 +957,30 @@ body {
   border: 1px solid var(--border-strong);
 }
 
+.status-partial {
+  color: hsl(28, 95%, 60%);
+  background: hsla(28, 95%, 60%, 0.12);
+  border: 1px solid hsla(28, 95%, 60%, 0.35);
+}
+
+.order-partial {
+  border-left: 3px solid hsl(28, 95%, 60%) !important;
+}
+
+.order-partial-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: hsla(28, 95%, 60%, 0.06);
+  border: 1px dashed hsla(28, 95%, 60%, 0.4);
+  border-radius: var(--r-sm);
+  font-size: 0.68rem;
+  color: hsl(28, 95%, 65%);
+  line-height: 1.4;
+}
+
 .order-pair-row {
   display: flex;
   align-items: center;

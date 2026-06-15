@@ -1308,9 +1308,13 @@ async function loadUserOrders() {
 
     container.innerHTML = mine.map(o => {
       const idStr = o.id.toString();
-      const isFilled = history.filled.has(idStr);
+      const touchedByMatch = history.filled.has(idStr);
       const isCancelled = history.cancelled.has(idStr);
-      const status = isFilled ? "filled" : isCancelled ? "cancelled" : "pending";
+      // isSettled (on-chain) = order completely closed by the contract.
+      // touchedByMatch && !isSettled = partially filled, still active in enclave.
+      const isFullyFilled = o.isSettled;
+      const isPartialFill = touchedByMatch && !o.isSettled;
+      const status = isFullyFilled ? "filled" : isPartialFill ? "partial" : isCancelled ? "cancelled" : "pending";
 
       // v3 : les montants ne sont JAMAIS publiés, même après règlement.
       // Le propriétaire garde son droit KMS et peut déchiffrer ses propres ordres.
@@ -1321,6 +1325,7 @@ async function loadUserOrders() {
 
       const statusBadge = {
         filled:    `<span class="order-status status-settled">Filled</span>`,
+        partial:   `<span class="order-status status-partial">Partial Fill</span>`,
         cancelled: `<span class="order-status status-cancelled">Cancelled</span>`,
         pending:   `<span class="order-status status-pending">Pending</span>`
       }[status];
@@ -1333,10 +1338,16 @@ async function loadUserOrders() {
              Stealth
            </span>` : "";
 
+      const partialNote = isPartialFill ? `
+        <div class="order-partial-note">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l2 2"/></svg>
+          Partially filled — remaining amount still locked &amp; active in the matching engine.
+        </div>` : "";
+
       const body = `
         <div class="order-amounts" id="orderAmounts-${idStr}">
           <div class="order-handle-row">
-            <span class="handle-label">Encrypted amounts${status === "filled" ? " · settled confidentially" : ""}</span>
+            <span class="handle-label">Encrypted amounts${status === "filled" ? " · settled confidentially" : status === "partial" ? " · partially settled · still active" : ""}</span>
             <span class="handle-value" title="${o.amountInHandle}">${o.amountInHandle.slice(0, 22)}…</span>
           </div>
           <button class="btn-reveal" onclick="handleRevealOrder(${idStr})" title="Decrypt with your KMS rights — only you can see this">
@@ -1346,6 +1357,7 @@ async function loadUserOrders() {
             </svg>
             Reveal amounts
           </button>
+          ${partialNote}
         </div>`;
 
       // cancelOrder exige msg.sender == owner : pas de variante relayée, donc
@@ -1361,7 +1373,7 @@ async function loadUserOrders() {
         </button>`;
 
       return `
-      <div class="order-card ${status !== "pending" ? "order-settled" : ""}">
+      <div class="order-card ${status === "filled" ? "order-settled" : status === "partial" ? "order-partial" : status === "cancelled" ? "order-settled" : ""}">
         <div class="order-top">
           <span class="order-id">Order #${idStr}</span>
           <span class="order-badges">${stealthBadge}${statusBadge}</span>
