@@ -60,6 +60,12 @@ contract DarkPoolVault is ReentrancyGuard, Ownable {
     struct MatchRef {
         uint256 orderId1;
         uint256 orderId2;
+        externalEuint256 amount1To2External;
+        bytes amount1To2Proof;
+        externalEuint256 amount2To1External;
+        bytes amount2To1Proof;
+        bool closeOrder1;
+        bool closeOrder2;
         uint256 salt; // Nonce unique généré par l'enclave pour empêcher le rejeu du match
     }
 
@@ -468,9 +474,9 @@ contract DarkPoolVault is ReentrancyGuard, Ownable {
     }
 
     /**
-     * @dev Règle des matches signés par l'enclave. L'enclave ne transmet QUE les
-     *      identifiants d'ordres + un salt : les montants échangés sont les montants
-     *      séquestrés chiffrés stockés à la soumission. Rien n'est révélé.
+     * @dev Règle des matches signés par l'enclave. L'enclave transmet les identifiants
+     *      d'ordres, les montants d'exécution chiffrés avec leurs preuves associés,
+     *      les indicateurs de clôture d'ordres, et un salt unique.
      */
     function settleMatches(MatchRef[] calldata matches, bytes calldata signature) external nonReentrant {
         bytes32 messageHash = keccak256(abi.encode(block.chainid, address(this), matches));
@@ -481,7 +487,15 @@ contract DarkPoolVault is ReentrancyGuard, Ownable {
         for (uint256 i = 0; i < matches.length; i++) {
             MatchRef calldata m = matches[i];
 
-            bytes32 matchHash = keccak256(abi.encode(m.orderId1, m.orderId2, m.salt));
+            bytes32 matchHash = keccak256(abi.encode(
+                m.orderId1,
+                m.orderId2,
+                externalEuint256.unwrap(m.amount1To2External),
+                externalEuint256.unwrap(m.amount2To1External),
+                m.closeOrder1,
+                m.closeOrder2,
+                m.salt
+            ));
             require(!processedMatches[matchHash], "DarkPoolVault: Match already processed");
             processedMatches[matchHash] = true;
 
@@ -496,25 +510,75 @@ contract DarkPoolVault is ReentrancyGuard, Ownable {
                 "DarkPoolVault: Pair mismatch"
             );
 
-            // Échange croisé des montants séquestrés — entièrement sur chiffrés.
-            // Toutes les lectures avant toutes les écritures (cas du self-trade).
-            euint256 newLocked1 = Nox.sub(_locked[o1.owner][o1.tokenIn], o1.lockedAmount);
-            euint256 newAvail2  = Nox.add(_available[o2.owner][o1.tokenIn], o1.lockedAmount);
-            euint256 newLocked2 = Nox.sub(_locked[o2.owner][o2.tokenIn], o2.lockedAmount);
-            euint256 newAvail1  = Nox.add(_available[o1.owner][o2.tokenIn], o2.lockedAmount);
+            // Import des montants d'exécution chiffrés signés par l'enclave
+            euint256 amount1To2 = _fromExternalFor(m.amount1To2External, m.amount1To2Proof, enclaveAddress);
+            euint256 amount2To1 = _fromExternalFor(m.amount2To1External, m.amount2To1Proof, enclaveAddress);
 
+            Nox.allowThis(amount1To2);
+            Nox.allowThis(amount2To1);
+            Nox.allow(amount1To2, o1.owner);
+            Nox.allow(amount1To2, o2.owner);
+            Nox.allow(amount1To2, enclaveAddress);
+            Nox.allow(amount2To1, o1.owner);
+            Nox.allow(amount2To1, o2.owner);
+            Nox.allow(amount2To1, enclaveAddress);
+
+            // Calcul du reste verrouillé dans chaque ordre
+            euint256 newOrderLocked1 = Nox.sub(o1.lockedAmount, amount1To2);
+            euint256 newOrderLocked2 = Nox.sub(o2.lockedAmount, amount2To1);
+
+            Nox.allowThis(newOrderLocked1);
+            Nox.allowThis(newOrderLocked2);
+            Nox.allow(newOrderLocked1, o1.owner);
+            Nox.allow(newOrderLocked1, enclaveAddress);
+            Nox.allow(newOrderLocked2, o2.owner);
+            Nox.allow(newOrderLocked2, enclaveAddress);
+
+            // 1. Transfert du token1 (amount1To2) de o1.owner vers o2.owner
+            euint256 newLocked1 = Nox.sub(_locked[o1.owner][o1.tokenIn], amount1To2);
             _grantBalanceACL(newLocked1, o1.owner);
-            _grantBalanceACL(newAvail2,  o2.owner);
-            _grantBalanceACL(newLocked2, o2.owner);
-            _grantBalanceACL(newAvail1,  o1.owner);
+            _locked[o1.owner][o1.tokenIn] = newLocked1;
 
-            _locked[o1.owner][o1.tokenIn]    = newLocked1;
+            euint256 newAvail2 = Nox.add(_available[o2.owner][o1.tokenIn], amount1To2);
+            _grantBalanceACL(newAvail2, o2.owner);
             _available[o2.owner][o1.tokenIn] = newAvail2;
-            _locked[o2.owner][o2.tokenIn]    = newLocked2;
+
+            // 2. Transfert du token2 (amount2To1) de o2.owner vers o1.owner
+            euint256 newLocked2 = Nox.sub(_locked[o2.owner][o2.tokenIn], amount2To1);
+            _grantBalanceACL(newLocked2, o2.owner);
+            _locked[o2.owner][o2.tokenIn] = newLocked2;
+
+            euint256 newAvail1 = Nox.add(_available[o1.owner][o2.tokenIn], amount2To1);
+            _grantBalanceACL(newAvail1, o1.owner);
             _available[o1.owner][o2.tokenIn] = newAvail1;
 
-            o1.isSettled = true;
-            o2.isSettled = true;
+            // 3. Mise à jour du lockedAmount dans l'état de l'ordre
+            o1.lockedAmount = newOrderLocked1;
+            o2.lockedAmount = newOrderLocked2;
+
+            // 4. Clôture des ordres et remboursement du reliquat non-exécuté si demandé
+            if (m.closeOrder1) {
+                euint256 refundAvail1 = Nox.add(_available[o1.owner][o1.tokenIn], newOrderLocked1);
+                _grantBalanceACL(refundAvail1, o1.owner);
+                _available[o1.owner][o1.tokenIn] = refundAvail1;
+
+                euint256 refundLocked1 = Nox.sub(_locked[o1.owner][o1.tokenIn], newOrderLocked1);
+                _grantBalanceACL(refundLocked1, o1.owner);
+                _locked[o1.owner][o1.tokenIn] = refundLocked1;
+
+                o1.isSettled = true;
+            }
+            if (m.closeOrder2) {
+                euint256 refundAvail2 = Nox.add(_available[o2.owner][o2.tokenIn], newOrderLocked2);
+                _grantBalanceACL(refundAvail2, o2.owner);
+                _available[o2.owner][o2.tokenIn] = refundAvail2;
+
+                euint256 refundLocked2 = Nox.sub(_locked[o2.owner][o2.tokenIn], newOrderLocked2);
+                _grantBalanceACL(refundLocked2, o2.owner);
+                _locked[o2.owner][o2.tokenIn] = refundLocked2;
+
+                o2.isSettled = true;
+            }
 
             emit MatchSettled(m.orderId1, m.orderId2, o1.owner, o2.owner, o1.tokenIn, o2.tokenIn);
         }

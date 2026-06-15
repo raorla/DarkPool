@@ -57,10 +57,11 @@ describe("P0.3/P0.4 — ConfidentialToken & client furtif", function () {
     return wallet.signMessage(ethers.getBytes(digest));
   }
 
-  /** Signe un règlement (orderId1, orderId2, salt) comme l'enclave. */
+  /** Signe un règlement v3.2 avec exécutions partielles. */
   async function signMatches(signer, matchesArray) {
+    const matchesAbiString = "tuple(uint256 orderId1, uint256 orderId2, bytes32 amount1To2External, bytes amount1To2Proof, bytes32 amount2To1External, bytes amount2To1Proof, bool closeOrder1, bool closeOrder2, uint256 salt)[]";
     const encodedData = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["uint256", "address", "tuple(uint256 orderId1, uint256 orderId2, uint256 salt)[]"],
+      ["uint256", "address", matchesAbiString],
       [chainId, vaultAddress, matchesArray]
     );
     return signer.signMessage(ethers.getBytes(ethers.keccak256(encodedData)));
@@ -287,7 +288,11 @@ describe("P0.3/P0.4 — ConfidentialToken & client furtif", function () {
       );
 
       // Règlement signé par l'enclave
-      const matches = [[0n, 1n, 42n]];
+      const a1To2Handle = await makeAmountHandle(amount1);
+      const a2To1Handle = await makeAmountHandle(amount2);
+      const matches = [
+        [0n, 1n, a1To2Handle, "0x00", a2To1Handle, "0x00", true, true, 42n]
+      ];
       await vault.settleMatches(matches, await signMatches(enclaveSigner, matches));
 
       expect(await vaultAvailable(user1Address, cusdcAddress)).to.equal(amount2);
@@ -505,7 +510,11 @@ describe("P0.3/P0.4 — ConfidentialToken & client furtif", function () {
       );
 
       // 5. Règlement par l'enclave
-      const matches = [[0n, 1n, 7n]];
+      const a1To2Handle = await makeAmountHandle(funding);
+      const a2To1Handle = await makeAmountHandle(amount2);
+      const matches = [
+        [0n, 1n, a1To2Handle, "0x00", a2To1Handle, "0x00", true, true, 7n]
+      ];
       await vault.settleMatches(matches, await signMatches(enclaveSigner, matches));
       expect(await vaultAvailable(stealth.address, cusdcAddress)).to.equal(amount2);
 

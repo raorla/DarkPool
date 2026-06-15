@@ -47,11 +47,12 @@ describe("DarkPoolVault v3.1", function () {
     return vault.connect(signer).submitOrder(tokenIn, tokenOut, aIn, "0x00", mOut, "0x00");
   }
 
-  /** Signe un règlement v3 : seulement (orderId1, orderId2, salt). */
+  /** Signe un règlement v3.2 avec exécutions partielles. */
   async function signMatches(signer, matchesArray) {
     const chainId = (await ethers.provider.getNetwork()).chainId;
+    const matchesAbiString = "tuple(uint256 orderId1, uint256 orderId2, bytes32 amount1To2External, bytes amount1To2Proof, bytes32 amount2To1External, bytes amount2To1Proof, bool closeOrder1, bool closeOrder2, uint256 salt)[]";
     const encodedData = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["uint256", "address", "tuple(uint256 orderId1, uint256 orderId2, uint256 salt)[]"],
+      ["uint256", "address", matchesAbiString],
       [chainId, vaultAddress, matchesArray]
     );
     return signer.signMessage(ethers.getBytes(ethers.keccak256(encodedData)));
@@ -284,8 +285,12 @@ describe("DarkPoolVault v3.1", function () {
     });
 
     it("règle un match signé par l'enclave SANS révéler de montants", async function () {
+      const a1To2Handle = await makeAmountHandle(amount1);
+      const a2To1Handle = await makeAmountHandle(amount2);
       const salt = 42n;
-      const matchesArray = [[0n, 1n, salt]];
+      const matchesArray = [
+        [0n, 1n, a1To2Handle, "0x00", a2To1Handle, "0x00", true, true, salt]
+      ];
       const signature = await signMatches(enclaveSigner, matchesArray);
 
       // MatchSettled ne contient que ids/users/tokens — aucun montant
@@ -303,15 +308,56 @@ describe("DarkPoolVault v3.1", function () {
       expect((await vault.orders(1)).isSettled).to.be.true;
     });
 
+    it("règle un match PARTIEL confidentiel et met à jour les restes", async function () {
+      const execAmount1 = ethers.parseEther("4");      // 4 token1 exécutés
+      const execAmount2 = ethers.parseEther("12000");   // 12000 token2 exécutés
+      const a1To2Handle = await makeAmountHandle(execAmount1);
+      const a2To1Handle = await makeAmountHandle(execAmount2);
+
+      const salt = 55n;
+      const matchesArray = [
+        [0n, 1n, a1To2Handle, "0x00", a2To1Handle, "0x00", false, false, salt]
+      ];
+      const signature = await signMatches(enclaveSigner, matchesArray);
+
+      await expect(vault.settleMatches(matchesArray, signature))
+        .to.emit(vault, "MatchSettled")
+        .withArgs(0, 1, user1Address, user2Address, token1Address, token2Address);
+
+      // Balances mises à jour avec les montants partiels
+      expect(await decryptedBalance("availableBalanceOf", user1Address, token2Address)).to.equal(execAmount2);
+      expect(await decryptedBalance("availableBalanceOf", user2Address, token1Address)).to.equal(execAmount1);
+
+      // Balances verrouillées mises à jour (amount - execAmount)
+      expect(await decryptedBalance("lockedBalanceOf", user1Address, token1Address)).to.equal(amount1 - execAmount1);
+      expect(await decryptedBalance("lockedBalanceOf", user2Address, token2Address)).to.equal(amount2 - execAmount2);
+
+      // Les ordres ne sont pas clos
+      expect((await vault.orders(0)).isSettled).to.be.false;
+      expect((await vault.orders(1)).isSettled).to.be.false;
+
+      // Le lockedAmount dans l'ordre est mis à jour
+      const o1 = await vault.orders(0);
+      expect(await mock.getValue(o1.lockedAmount)).to.equal(amount1 - execAmount1);
+    });
+
     it("rejette une signature qui ne provient pas de l'enclave", async function () {
-      const matchesArray = [[0n, 1n, 1n]];
+      const a1To2Handle = await makeAmountHandle(amount1);
+      const a2To1Handle = await makeAmountHandle(amount2);
+      const matchesArray = [
+        [0n, 1n, a1To2Handle, "0x00", a2To1Handle, "0x00", true, true, 1n]
+      ];
       const badSignature = await signMatches(user1, matchesArray);
       await expect(vault.settleMatches(matchesArray, badSignature))
         .to.be.revertedWith("DarkPoolVault: Invalid enclave signature");
     });
 
     it("bloque le rejeu d'un match déjà exécuté", async function () {
-      const matchesArray = [[0n, 1n, 7n]];
+      const a1To2Handle = await makeAmountHandle(amount1);
+      const a2To1Handle = await makeAmountHandle(amount2);
+      const matchesArray = [
+        [0n, 1n, a1To2Handle, "0x00", a2To1Handle, "0x00", true, true, 7n]
+      ];
       const signature = await signMatches(enclaveSigner, matchesArray);
       await vault.settleMatches(matchesArray, signature);
       await expect(vault.settleMatches(matchesArray, signature))
@@ -321,25 +367,40 @@ describe("DarkPoolVault v3.1", function () {
     it("rejette un match dont les paires de tokens ne sont pas complémentaires", async function () {
       // ordre #2 : user1 vend token1 -> token2 (même sens que #0, incompatible avec lui)
       await submitOrder(user1, token1Address, token2Address, 1n, 1n);
-      const matchesArray = [[0n, 2n, 9n]];
+      const a1To2Handle = await makeAmountHandle(1n);
+      const a2To1Handle = await makeAmountHandle(1n);
+      const matchesArray = [
+        [0n, 2n, a1To2Handle, "0x00", a2To1Handle, "0x00", true, true, 9n]
+      ];
       const signature = await signMatches(enclaveSigner, matchesArray);
       await expect(vault.settleMatches(matchesArray, signature))
         .to.be.revertedWith("DarkPoolVault: Pair mismatch");
     });
 
     it("rejette un match référençant un ordre déjà réglé", async function () {
-      const first = [[0n, 1n, 11n]];
+      const a1To2Handle = await makeAmountHandle(amount1);
+      const a2To1Handle = await makeAmountHandle(amount2);
+      const first = [
+        [0n, 1n, a1To2Handle, "0x00", a2To1Handle, "0x00", true, true, 11n]
+      ];
       await vault.settleMatches(first, await signMatches(enclaveSigner, first));
-      const second = [[0n, 1n, 12n]]; // salt différent => passe le rejeu, bloque sur isSettled
+      const second = [
+        [0n, 1n, a1To2Handle, "0x00", a2To1Handle, "0x00", true, true, 12n]
+      ]; // salt différent => passe le rejeu, bloque sur isSettled
       await expect(vault.settleMatches(second, await signMatches(enclaveSigner, second)))
         .to.be.revertedWith("DarkPoolVault: Order1 already settled");
     });
 
     it("rejette un match référençant un ordre inexistant", async function () {
-      const matchesArray = [[0n, 99n, 13n]];
+      const a1To2Handle = await makeAmountHandle(amount1);
+      const a2To1Handle = await makeAmountHandle(amount2);
+      const matchesArray = [
+        [0n, 99n, a1To2Handle, "0x00", a2To1Handle, "0x00", true, true, 13n]
+      ];
       const signature = await signMatches(enclaveSigner, matchesArray);
       await expect(vault.settleMatches(matchesArray, signature))
         .to.be.revertedWith("DarkPoolVault: Unknown order");
     });
   });
 });
+

@@ -17,7 +17,7 @@ if (!PROVIDER_URL || !ENCLAVE_PRIVATE_KEY || !VAULT_ADDRESS) {
 const VAULT_ABI = [
   "event OrderSubmitted(uint256 indexed orderId, address indexed owner, address tokenIn, address tokenOut, bytes32 amountInHandle, bytes32 minAmountOutHandle, bytes32 solvencyOkHandle)",
   "event WithdrawRequested(address indexed user, address indexed token, uint256 amount)",
-  "function settleMatches((uint256,uint256,uint256)[] matches, bytes signature) external",
+  "function settleMatches((uint256 orderId1, uint256 orderId2, bytes32 amount1To2External, bytes amount1To2Proof, bytes32 amount2To1External, bytes amount2To1Proof, bool closeOrder1, bool closeOrder2, uint256 salt)[] matches, bytes signature) external",
   "function executeWithdraw(address user, address token, uint256 amount) external",
   "function rejectWithdraw(address user, address token) external",
   "function pendingWithdrawals(address user, address token) view returns (uint256)",
@@ -38,6 +38,7 @@ interface Order {
   tokenOut: string;
   amountIn: bigint;
   minAmountOut: bigint;
+  remainingAmountIn: bigint;
 }
 
 const privateOrderBook: Order[] = [];
@@ -103,7 +104,8 @@ async function processIncomingOrder(
       tokenIn: tokenIn,
       tokenOut: tokenOut,
       amountIn: amountIn,
-      minAmountOut: minAmountOut
+      minAmountOut: minAmountOut,
+      remainingAmountIn: amountIn
     });
 
     await runMatchingEngine();
@@ -129,17 +131,51 @@ async function runMatchingEngine() {
         orderA.tokenIn.toLowerCase() === orderB.tokenOut.toLowerCase() &&
         orderA.tokenOut.toLowerCase() === orderB.tokenIn.toLowerCase()
       ) {
+        // Vérification de compatibilité de prix : minAmountOutA * minAmountOutB <= amountInA * amountInB
         if (
-          orderA.amountIn >= orderB.minAmountOut &&
-          orderB.amountIn >= orderA.minAmountOut
+          orderA.minAmountOut * orderB.minAmountOut <= orderA.amountIn * orderB.amountIn
         ) {
           console.log(`[TEE] Match détecté entre l'ordre ${orderA.id} et ${orderB.id}`);
 
-          privateOrderBook.splice(j, 1);
-          privateOrderBook.splice(i, 1);
+          // Calcul des montants d'exécution en utilisant le prix limite de l'ordre A (maker)
+          const maxTokenA_In_from_B = (orderB.remainingAmountIn * orderA.amountIn) / orderA.minAmountOut;
 
-          await settleMatchedPair(orderA, orderB);
-          return;
+          let execAmt_tokenA_In = orderA.remainingAmountIn;
+          if (maxTokenA_In_from_B < execAmt_tokenA_In) {
+            execAmt_tokenA_In = maxTokenA_In_from_B;
+          }
+
+          if (execAmt_tokenA_In === 0n) {
+            continue;
+          }
+
+          const execAmt_tokenA_Out = (execAmt_tokenA_In * orderA.minAmountOut) / orderA.amountIn;
+          if (execAmt_tokenA_Out === 0n) {
+            continue;
+          }
+
+          console.log(`[TEE] Quantité exécutée : ${execAmt_tokenA_In.toString()} ${orderA.tokenIn} <=> ${execAmt_tokenA_Out.toString()} ${orderA.tokenOut}`);
+
+          // Mise à jour des montants restants
+          orderA.remainingAmountIn -= execAmt_tokenA_In;
+          orderB.remainingAmountIn -= execAmt_tokenA_Out;
+
+          const closeOrder1 = (orderA.remainingAmountIn === 0n);
+          const closeOrder2 = (orderB.remainingAmountIn === 0n);
+
+          // Retrait du carnet d'ordres s'ils sont entièrement remplis
+          if (closeOrder2) {
+            privateOrderBook.splice(j, 1);
+          }
+          if (closeOrder1) {
+            privateOrderBook.splice(i, 1);
+          }
+
+          // Règlement
+          await settleMatchedPair(orderA, orderB, execAmt_tokenA_In, execAmt_tokenA_Out, closeOrder1, closeOrder2);
+
+          // Redémarrage de la boucle pour traiter le reste du carnet
+          return runMatchingEngine();
         }
       }
     }
@@ -147,17 +183,61 @@ async function runMatchingEngine() {
 }
 
 /**
- * Signe et soumet le règlement du match. v3 : seuls les IDs d'ordres + un salt sont
- * transmis — les montants échangés restent chiffrés on-chain (séquestres euint256).
+ * Signe et soumet le règlement du match.
  */
-async function settleMatchedPair(orderA: Order, orderB: Order) {
+async function settleMatchedPair(
+  orderA: Order,
+  orderB: Order,
+  amount1To2: bigint,
+  amount2To1: bigint,
+  closeOrder1: boolean,
+  closeOrder2: boolean
+) {
   const salt = ethers.toBigInt(ethers.randomBytes(32));
   const network = await provider.getNetwork();
   const chainId = network.chainId;
 
-  const matchesArray = [[BigInt(orderA.id), BigInt(orderB.id), salt]];
+  console.log(`[TEE] Chiffrement du montant d'exécution 1To2 (${amount1To2.toString()}) via KMS...`);
+  const { handle: amount1To2Handle, handleProof: amount1To2Proof } = await handleClient.encryptInput(
+    amount1To2,
+    "uint256",
+    VAULT_ADDRESS
+  );
 
-  const matchesAbiString = "tuple(uint256 orderId1, uint256 orderId2, uint256 salt)[]";
+  console.log(`[TEE] Chiffrement du montant d'exécution 2To1 (${amount2To1.toString()}) via KMS...`);
+  const { handle: amount2To1Handle, handleProof: amount2To1Proof } = await handleClient.encryptInput(
+    amount2To1,
+    "uint256",
+    VAULT_ADDRESS
+  );
+
+  const matchDetails = {
+    orderId1: BigInt(orderA.id),
+    orderId2: BigInt(orderB.id),
+    amount1To2External: amount1To2Handle,
+    amount1To2Proof: ethers.getBytes(amount1To2Proof),
+    amount2To1External: amount2To1Handle,
+    amount2To1Proof: ethers.getBytes(amount2To1Proof),
+    closeOrder1: closeOrder1,
+    closeOrder2: closeOrder2,
+    salt: salt
+  };
+
+  const matchesArray = [
+    [
+      matchDetails.orderId1,
+      matchDetails.orderId2,
+      matchDetails.amount1To2External,
+      matchDetails.amount1To2Proof,
+      matchDetails.amount2To1External,
+      matchDetails.amount2To1Proof,
+      matchDetails.closeOrder1,
+      matchDetails.closeOrder2,
+      matchDetails.salt
+    ]
+  ];
+
+  const matchesAbiString = "tuple(uint256 orderId1, uint256 orderId2, bytes32 amount1To2External, bytes amount1To2Proof, bytes32 amount2To1External, bytes amount2To1Proof, bool closeOrder1, bool closeOrder2, uint256 salt)[]";
   const encodedData = ethers.AbiCoder.defaultAbiCoder().encode(
     ["uint256", "address", matchesAbiString],
     [chainId, VAULT_ADDRESS, matchesArray]
@@ -171,7 +251,7 @@ async function settleMatchedPair(orderA: Order, orderB: Order) {
     const tx = await vaultContract.settleMatches(matchesArray, signature);
     console.log(`[TEE] Transaction de règlement envoyée. Hash: ${tx.hash}`);
     await tx.wait();
-    console.log("[TEE] Règlement validé on-chain — montants jamais révélés !");
+    console.log("[TEE] Règlement partiel validé on-chain !");
   } catch (error) {
     console.error("[TEE] Échec de la soumission de la transaction de règlement:", error);
   }
