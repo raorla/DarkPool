@@ -87,12 +87,14 @@ et protège les utilisateurs distraits sur le `minAmountOut`.
 
 ## 🔷 P2 — Réalisme trading
 
-### P2.1 Exécutions partielles
-Un ordre de 0.05 WETH doit pouvoir être servi par 5 contre-ordres de 0.01.
-Nécessite : montants résiduels chiffrés dans l'ordre (`Nox.sub` à chaque fill),
-séquestre décrémenté progressivement, état `PartiallyFilled` dans l'UI.
+### P2.1 Exécutions partielles ✅
+Implémentation complète des exécutions partielles confidentielles gérées par l'enclave et réglées on-chain :
+- Mise à jour du vault (`DarkPoolVault.sol`) et du struct `MatchRef` pour recevoir les montants exécutés sous forme chiffrée avec leurs preuves d'intégrité respectives, et mise à jour dynamique des soldes verrouillés via des soustractions chiffrées (`Nox.sub`).
+- Enclave mise à jour pour suivre le solde résiduel (`remainingAmountIn`), valider la compatibilité des taux limites, et générer les handles chiffrés de règlement via KMS.
+- Intégration de drapeaux on-chain (`closeOrder`) pour clôturer sélectivement les ordres lorsqu'ils sont entièrement remplis ou annulés.
+- Couverture complète dans la suite de tests unitaires et E2E (`ConfidentialFlows.test.js`).
 
-### P2.2 Expiration des ordres (TTL) + nettoyage
+### P2.2 Expiration des ordres (TTL) + nettoyage ⏳
 Champ `expiresAt` public dans l'ordre ; l'enclave écarte les ordres expirés et
 n'importe qui peut appeler `expireOrder(id)` pour déséquestrer (incitation possible).
 
@@ -162,4 +164,5 @@ disponibilité de l'enclave pour récupérer ses fonds.
 | v1 | `0x2aAB9826…a502` | ACL manquante (ordres indéchiffrables) — vidé |
 | v2 | `0x01D05e5F…2780` | Soldes publics, règlement en clair — vidé |
 | v3.0 | `0xa5107D17…27f5` | Confidentiel mais retraits non idempotents — vidé |
-| **v3.1** | **`0x85641d86…0aEb`** | **Actif** — confidentialité E2E + file de retraits |
+| v3.1 | `0x85641d86…0aEb` / `0x379a64Bd…7ECD` | Confidentialité E2E + file de retraits — vidé |
+| **v3.2** | **`0x568eB7B8D2467cF7BdEEC799Af2dF86f1a58C4D0`** | **Actif** — Exécutions partielles confidentielles |

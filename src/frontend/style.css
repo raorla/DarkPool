@@ -1370,3 +1370,71 @@ a.stealth-addr-link:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+/* ── UI/UX Stepper & Help Guidelines Enhancements ────────────────────────── */
+.bal-sub-label {
+  font-size: 0.54rem;
+  color: var(--text-3);
+  opacity: 0.8;
+  margin-top: 2px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.help-tip-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  margin: 0 0 18px 0;
+  background: rgba(139, 124, 255, 0.05);
+  border: 1px dashed rgba(139, 124, 255, 0.35);
+  border-radius: var(--r-md);
+  animation: fade-in 0.3s ease-in-out;
+}
+
+.help-tip-pulse {
+  width: 8px;
+  height: 8px;
+  background: var(--violet);
+  border-radius: 50%;
+  box-shadow: 0 0 10px var(--violet);
+  animation: pulse-dot 1.8s infinite;
+  flex-shrink: 0;
+}
+
+.help-tip-text {
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+.help-tip-text strong {
+  color: var(--violet);
+  font-weight: 600;
+}
+
+.stealth-step {
+  transition: border-color 0.25s var(--ease), box-shadow 0.25s var(--ease), background 0.25s var(--ease);
+}
+
+.stealth-step.step-active {
+  border-color: rgba(139, 124, 255, 0.45) !important;
+  background: rgba(139, 124, 255, 0.03);
+  box-shadow: 0 0 16px rgba(139, 124, 255, 0.06);
+}
+
+.stealth-step.step-active .stealth-step-label {
+  color: var(--violet) !important;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed !important;
+  transform: none !important;
+  box-shadow: none !important;
+  background: rgba(132, 145, 180, 0.06) !important;
+  border-color: var(--border) !important;
+  color: var(--text-3) !important;
+}
+

@@ -4,6 +4,7 @@
   "description": "Production-ready MVP of Decentralized Dark Pool on iExec Nox",
   "main": "dist-server/enclave/index.js",
   "scripts": {
+    "start": "npm run build && concurrently -n \"enclave,relayer,dev\" -c \"magenta,cyan,blue\" \"npm run enclave\" \"npm run relayer\" \"npm run dev\"",
     "build": "tsc",
     "enclave": "node dist-server/enclave/index.js",
     "client": "node dist-server/client/index.js",
@@ -27,6 +28,7 @@
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "@types/node": "^20.14.2",
+    "concurrently": "^10.0.3",
     "hardhat": "^2.28.6",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3",

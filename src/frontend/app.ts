@@ -7,11 +7,11 @@ import { sepolia } from "viem/chains";
 import { createViemHandleClient } from "@iexec-nox/handle";
 
 // ── Contract addresses (vault v3.2 — confidential wrappers + meta-tx) ──────
-const VAULT_ADDRESS  = import.meta.env.VITE_VAULT_ADDRESS  || "0x379a64Bd075b6F8969742BF39F846840B1267ECD";
+const VAULT_ADDRESS  = import.meta.env.VITE_VAULT_ADDRESS  || "0x568eB7B8D2467cF7BdEEC799Af2dF86f1a58C4D0";
 const WETH_ADDRESS   = import.meta.env.VITE_WETH_ADDRESS   || "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14";
 const USDC_ADDRESS   = import.meta.env.VITE_USDC_ADDRESS   || "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238";
-const CWETH_ADDRESS  = import.meta.env.VITE_CWETH_ADDRESS  || "0x3664e88d2f6bDdfD185341e28085bfBc36686b92";
-const CUSDC_ADDRESS  = import.meta.env.VITE_CUSDC_ADDRESS  || "0x8298C4f4B732371574a412FEB7e0f0bD17e53A1f";
+const CWETH_ADDRESS  = import.meta.env.VITE_CWETH_ADDRESS  || "0x9901b7Ffb491035b4068f167CaEfd6DB038B63de";
+const CUSDC_ADDRESS  = import.meta.env.VITE_CUSDC_ADDRESS  || "0xad6a8Ffa9Cd1d3432557fD281bf1C41Cf95ff3EA";
 
 const CHAIN_ID = 11155111n; // Sepolia — entre dans les digests meta-tx (anti-rejeu)
 
@@ -33,6 +33,16 @@ let mode: Mode = "standard";
 let stealthAccount: any = null;
 let stealthClient: any = null;
 let stealthHandleClient: any = null;
+
+// Latest cached balances for state-aware UI & guide
+let last_wWeth = 0n;
+let last_wUsdc = 0n;
+let last_swWeth = 0n;
+let last_swUsdc = 0n;
+let last_svWeth = 0n;
+let last_svUsdc = 0n;
+let last_mwWeth = 0n;
+let last_mwUsdc = 0n;
 
 // File de déchiffrement KMS par client : les decrypt() sont sérialisés pour que
 // le PREMIER crée et mette en cache l'autorisation EIP-712 (valable 1 h) que les
@@ -556,14 +566,32 @@ async function refreshBalances() {
       return BigInt(r.value);
     };
 
-    const [wWeth, vWeth, wUsdc, vUsdc, lWeth, lUsdc] = await Promise.all([
+    const mainWrapperRead = async (cToken: string): Promise<bigint> => {
+      if (!handleClient) return 0n;
+      const handle = await walletClient.readContract({
+        address: cToken, abi: CTOKEN_ABI, functionName: "balanceOf",
+        args: [userAddress]
+      }) as string;
+      if (!handle || handle === ZERO_HANDLE) return 0n;
+      const r = await kmsDecrypt(handleClient, handle);
+      return BigInt(r.value);
+    };
+
+    const [wWeth, vWeth, wUsdc, vUsdc, lWeth, lUsdc, mwWeth, mwUsdc] = await Promise.all([
       read(WETH_ADDRESS, "balanceOf", [userAddress]),
       vaultRead(handleClient, userAddress, "availableBalanceOf", WETH_ADDRESS),
       read(USDC_ADDRESS, "balanceOf", [userAddress]),
       vaultRead(handleClient, userAddress, "availableBalanceOf", USDC_ADDRESS),
       vaultRead(handleClient, userAddress, "lockedBalanceOf", WETH_ADDRESS),
-      vaultRead(handleClient, userAddress, "lockedBalanceOf", USDC_ADDRESS)
+      vaultRead(handleClient, userAddress, "lockedBalanceOf", USDC_ADDRESS),
+      mainWrapperRead(CWETH_ADDRESS),
+      mainWrapperRead(CUSDC_ADDRESS)
     ]);
+
+    last_wWeth = wWeth;
+    last_wUsdc = wUsdc;
+    last_mwWeth = mwWeth;
+    last_mwUsdc = mwUsdc;
 
     if (lWeth > 0n || lUsdc > 0n) {
       log(`Locked in pending orders: ${formatToken(lWeth, 18)} WETH · ${formatToken(lUsdc, 6, 2)} USDC`, "info");
@@ -619,8 +647,19 @@ async function refreshBalances() {
       setText("stVaultWethText", formatToken(svWeth, 18));
       setText("stWrapUsdcText",  formatToken(swUsdc, 6, 2));
       setText("stVaultUsdcText", formatToken(svUsdc, 6, 2));
+
+      last_swWeth = swWeth;
+      last_svWeth = svWeth;
+      last_swUsdc = swUsdc;
+      last_svUsdc = svUsdc;
+    } else {
+      last_swWeth = 0n;
+      last_svWeth = 0n;
+      last_swUsdc = 0n;
+      last_svUsdc = 0n;
     }
 
+    updateStealthFlowUI();
     log("Balances updated.", "success");
   } catch (err: any) {
     log(`Balance read error: ${err.message || err}`, "error");
@@ -700,6 +739,146 @@ async function handleWithdraw() {
 }
 
 // ── Stealth flows (P0.3 + P0.4) ────────────────────────────────────────────
+function updateStealthFlowUI() {
+  const symbol = (document.getElementById("stealthTokenSelect") as HTMLSelectElement)?.value || "WETH";
+  const cSymbol = symbol === "WETH" ? "cWETH" : "cUSDC";
+
+  // Get current balances based on selection
+  let w = 0n;
+  let sw = 0n;
+  let sv = 0n;
+  let mw = 0n;
+
+  if (symbol === "WETH") {
+    w = last_wWeth;
+    sw = last_swWeth;
+    sv = last_svWeth;
+    mw = last_mwWeth;
+  } else {
+    w = last_wUsdc;
+    sw = last_swUsdc;
+    sv = last_svUsdc;
+    mw = last_mwUsdc;
+  }
+
+  // Get elements
+  const stealthFundBtn = document.getElementById("stealthFundBtn") as HTMLButtonElement | null;
+  const stealthDepositBtn = document.getElementById("stealthDepositBtn") as HTMLButtonElement | null;
+  const stealthWithdrawBtn = document.getElementById("stealthWithdrawBtn") as HTMLButtonElement | null;
+  const stealthExitBtn = document.getElementById("stealthExitBtn") as HTMLButtonElement | null;
+  const stealthUnwrapBtn = document.getElementById("stealthUnwrapBtn") as HTMLButtonElement | null;
+  const stMainWrapBalText = document.getElementById("stMainWrapBalText");
+
+  const step1 = document.getElementById("stealthStep1");
+  const step2 = document.getElementById("stealthStep2");
+  const step3 = document.getElementById("stealthStep3");
+  const orderPanel = document.querySelector(".panel-order") as HTMLElement | null;
+  const helpTipText = document.getElementById("stealthHelpTipText");
+
+  // Reset highlight states
+  step1?.classList.remove("step-active");
+  step2?.classList.remove("step-active");
+  step3?.classList.remove("step-active");
+  orderPanel?.classList.remove("step-active");
+
+  // If not connected or no stealth Account initialized
+  if (!userAddress || !stealthAccount) {
+    if (stealthFundBtn) { stealthFundBtn.disabled = true; stealthFundBtn.title = "Connect wallet and switch to stealth mode first."; }
+    if (stealthDepositBtn) { stealthDepositBtn.disabled = true; stealthDepositBtn.title = "Connect wallet and switch to stealth mode first."; }
+    if (stealthWithdrawBtn) { stealthWithdrawBtn.disabled = true; stealthWithdrawBtn.title = "Connect wallet and switch to stealth mode first."; }
+    if (stealthExitBtn) { stealthExitBtn.disabled = true; stealthExitBtn.title = "Connect wallet and switch to stealth mode first."; }
+    if (stealthUnwrapBtn) { stealthUnwrapBtn.disabled = true; stealthUnwrapBtn.title = "Connect wallet and switch to stealth mode first."; }
+    if (stMainWrapBalText) stMainWrapBalText.innerText = "Main Wrapper: —";
+    if (helpTipText) {
+      helpTipText.innerHTML = "Please <strong>connect your wallet</strong> and switch to <strong>Stealth Mode</strong> to initialize your confidential identity.";
+    }
+    return;
+  }
+
+  // Handle Button disabled/enabled states
+  if (stealthFundBtn) {
+    if (w === 0n) {
+      stealthFundBtn.disabled = true;
+      stealthFundBtn.title = `Your main wallet has 0 ${symbol}. Obtain public ${symbol} to fund stealth.`;
+    } else {
+      stealthFundBtn.disabled = false;
+      stealthFundBtn.title = `Wrap ${symbol} and send confidentially to stealth wrapper.`;
+    }
+  }
+
+  if (stealthDepositBtn) {
+    if (sw === 0n) {
+      stealthDepositBtn.disabled = true;
+      stealthDepositBtn.title = `Your stealth wrapper has 0 ${cSymbol}. Run Step 1 (Fund) first.`;
+    } else {
+      stealthDepositBtn.disabled = false;
+      stealthDepositBtn.title = `Deposit ${cSymbol} from wrapper into Dark Pool Vault (gasless).`;
+    }
+  }
+
+  if (stealthExitBtn) {
+    if (sw === 0n) {
+      stealthExitBtn.disabled = true;
+      stealthExitBtn.title = `Your stealth wrapper has 0 ${cSymbol}. Deposit or withdraw to wrapper first.`;
+    } else {
+      stealthExitBtn.disabled = false;
+      stealthExitBtn.title = `Send ${cSymbol} from stealth wrapper to another wallet (gasless).`;
+    }
+  }
+
+  if (stealthWithdrawBtn) {
+    if (sv === 0n) {
+      stealthWithdrawBtn.disabled = true;
+      stealthWithdrawBtn.title = `Your vault balance is 0 ${cSymbol}.`;
+    } else {
+      stealthWithdrawBtn.disabled = false;
+      stealthWithdrawBtn.title = `Withdraw ${cSymbol} from Dark Pool Vault back to stealth wrapper (gasless).`;
+    }
+  }
+
+  if (stMainWrapBalText) {
+    stMainWrapBalText.innerText = `Main Wrapper: ${formatToken(mw, symbol === "WETH" ? 18 : 6, 2)} ${cSymbol}`;
+  }
+
+  if (stealthUnwrapBtn) {
+    if (mw === 0n) {
+      stealthUnwrapBtn.disabled = true;
+      stealthUnwrapBtn.title = `Your main wallet has 0 ${cSymbol} to unwrap.`;
+    } else {
+      stealthUnwrapBtn.disabled = false;
+      stealthUnwrapBtn.title = `Unwrap ${cSymbol} held by your main wallet (pays gas).`;
+    }
+  }
+
+  // Active step & tip logic
+  if (w === 0n && sw === 0n && sv === 0n) {
+    if (helpTipText) {
+      helpTipText.innerHTML = `Your public main wallet, stealth wrapper, and vault are empty. Obtain some public <strong>${symbol}</strong> first to begin.`;
+    }
+    step1?.classList.add("step-active");
+  } else if (sw > 0n) {
+    if (helpTipText) {
+      helpTipText.innerHTML = `You have confidential <strong>${cSymbol}</strong> in your stealth wrapper. Deposit them into the vault (<strong>Step 2</strong>) to unlock trading.`;
+    }
+    step2?.classList.add("step-active");
+  } else if (w > 0n && sv === 0n) {
+    if (helpTipText) {
+      helpTipText.innerHTML = `You have public <strong>${symbol}</strong> in your main wallet. Wrap and send them to your stealth address (<strong>Step 1</strong>) to start.`;
+    }
+    step1?.classList.add("step-active");
+  } else if (sv > 0n) {
+    if (helpTipText) {
+      helpTipText.innerHTML = `Your <strong>${cSymbol}</strong> is secured in the Dark Pool Vault. You can now place confidential limit orders below. To withdraw, use <strong>Step 2 (Withdraw)</strong>.`;
+    }
+    orderPanel?.classList.add("step-active");
+  } else {
+    if (helpTipText) {
+      helpTipText.innerHTML = `Fund your stealth address (<strong>Step 1</strong>) or deposit wrapper tokens (<strong>Step 2</strong>) to use the dark pool.`;
+    }
+    step1?.classList.add("step-active");
+  }
+}
+
 function stealthSelection(): { symbol: string; cSymbol: string; underlying: string; cToken: string; amount: bigint; raw: string } | null {
   const symbol = (document.getElementById("stealthTokenSelect") as HTMLSelectElement).value;
   const raw    = (document.getElementById("stealthAmountInput") as HTMLInputElement).value;
@@ -1311,4 +1490,10 @@ document.addEventListener("DOMContentLoaded", () => {
   // Dynamic sell/buy token labels
   const sellSelect = document.getElementById("orderTokenInSelect") as HTMLSelectElement;
   sellSelect.addEventListener("change", syncOrderPanelLabels);
+
+  // Stealth token selection change
+  document.getElementById("stealthTokenSelect")?.addEventListener("change", updateStealthFlowUI);
+
+  // Initialize stealth flow UI instructions/states
+  updateStealthFlowUI();
 });

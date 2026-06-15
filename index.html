@@ -293,17 +293,20 @@
               </div>
             </div>
             <div class="token-balances">
-              <div class="bal-pill">
+              <div class="bal-pill" title="Public WETH balance of your connected main wallet.">
                 <span class="bal-label">Wallet</span>
                 <span id="stWalletWethText" class="bal-value">—</span>
+                <span class="bal-sub-label">Public Main</span>
               </div>
-              <div class="bal-pill">
+              <div class="bal-pill" title="Confidential cWETH wrapper balance of your derived stealth address.">
                 <span class="bal-label">Wrapper</span>
                 <span id="stWrapWethText" class="bal-value">—</span>
+                <span class="bal-sub-label">Stealth (cToken)</span>
               </div>
-              <div class="bal-pill accent-pill">
+              <div class="bal-pill accent-pill" title="cWETH locked in the Dark Pool Vault matching engine.">
                 <span class="bal-label">Vault</span>
                 <span id="stVaultWethText" class="bal-value">—</span>
+                <span class="bal-sub-label">Locked Vault</span>
               </div>
             </div>
           </div>
@@ -316,20 +319,29 @@
               </div>
             </div>
             <div class="token-balances">
-              <div class="bal-pill">
+              <div class="bal-pill" title="Public USDC balance of your connected main wallet.">
                 <span class="bal-label">Wallet</span>
                 <span id="stWalletUsdcText" class="bal-value">—</span>
+                <span class="bal-sub-label">Public Main</span>
               </div>
-              <div class="bal-pill">
+              <div class="bal-pill" title="Confidential cUSDC wrapper balance of your derived stealth address.">
                 <span class="bal-label">Wrapper</span>
                 <span id="stWrapUsdcText" class="bal-value">—</span>
+                <span class="bal-sub-label">Stealth (cToken)</span>
               </div>
-              <div class="bal-pill accent-pill">
+              <div class="bal-pill accent-pill" title="cUSDC locked in the Dark Pool Vault matching engine.">
                 <span class="bal-label">Vault</span>
                 <span id="stVaultUsdcText" class="bal-value">—</span>
+                <span class="bal-sub-label">Locked Vault</span>
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- Dynamic Contextual Help Tip -->
+        <div id="stealthHelpTip" class="help-tip-box">
+          <span class="help-tip-pulse"></span>
+          <span id="stealthHelpTipText" class="help-tip-text">Loading instructions...</span>
         </div>
 
         <div class="vault-actions">
@@ -343,7 +355,7 @@
           </div>
 
           <div class="stealth-flow">
-            <div class="stealth-step">
+            <div id="stealthStep1" class="stealth-step">
               <span class="stealth-step-label">1 · Fund <em>main wallet · public entry</em></span>
               <button id="stealthFundBtn" class="btn btn-deposit btn-block">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -352,7 +364,7 @@
                 Wrap &amp; send to stealth
               </button>
             </div>
-            <div class="stealth-step">
+            <div id="stealthStep2" class="stealth-step">
               <span class="stealth-step-label">2 · Trade <em>stealth · relayed</em><span class="gasless-tag">gasless</span></span>
               <div class="btn-duo">
                 <button id="stealthDepositBtn" class="btn btn-deposit">
@@ -369,28 +381,31 @@
                 </button>
               </div>
             </div>
-            <div class="stealth-step">
+            <div id="stealthStep3" class="stealth-step">
               <span class="stealth-step-label">3 · Exit <em>to any wallet (confidential)</em></span>
               <div class="input-row" style="margin-top: 6px; margin-bottom: 8px;">
                 <input type="text" id="stealthExitAddressInput" class="num-input" placeholder="Recipient address (0x...)"
                   style="font-family: var(--font-mono); font-size: 0.82rem; width: 100%; border: 1px solid var(--border); border-radius: var(--r-sm); padding: 6px 12px; background: var(--bg-card);" aria-label="Recipient Address">
               </div>
               <div class="btn-duo">
-                <button id="stealthExitBtn" class="btn btn-withdraw"
+                <button id="stealthExitBtn" class="btn btn-withdraw" style="flex: 1;"
                   title="Confidential transfer from the stealth wrapper to the recipient address — gasless">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                     <path d="M19 12H5M12 19l-7-7 7-7" />
                   </svg>
                   Send to wallet
                 </button>
-                <button id="stealthUnwrapBtn" class="btn btn-withdraw"
-                  title="Unwrap cTokens held by your connected wallet back to public ERC-20 (pays gas)">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                    <rect x="3" y="11" width="18" height="11" rx="2" />
-                    <path d="M7 11V7a5 5 0 0 1 9.9-1" />
-                  </svg>
-                  Unwrap (main)
-                </button>
+                <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                  <button id="stealthUnwrapBtn" class="btn btn-withdraw" style="width: 100%;"
+                    title="Unwrap cTokens held by your connected wallet back to public ERC-20 (pays gas)">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                      <rect x="3" y="11" width="18" height="11" rx="2" />
+                      <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+                    </svg>
+                    Unwrap (main)
+                  </button>
+                  <span id="stMainWrapBalText" class="bal-sub-label" style="font-size: 0.65rem; color: var(--text-3);">Main Wrapper: —</span>
+                </div>
               </div>
             </div>
           </div>
