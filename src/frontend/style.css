@@ -979,6 +979,20 @@ body {
   font-size: 0.68rem;
   color: hsl(28, 95%, 65%);
   line-height: 1.4;
+  flex-wrap: wrap;
+}
+
+.partial-remaining {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  background: hsla(28, 95%, 60%, 0.15);
+  border: 1px solid hsla(28, 95%, 60%, 0.4);
+  border-radius: 20px;
+  font-weight: 700;
+  font-size: 0.67rem;
+  color: hsl(28, 95%, 72%);
+  white-space: nowrap;
 }
 
 .order-pair-row {

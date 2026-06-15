@@ -41,6 +41,8 @@ let last_swWeth = 0n;
 let last_swUsdc = 0n;
 let last_svWeth = 0n;
 let last_svUsdc = 0n;
+let last_slWeth = 0n;  // locked in pending orders (stealth)
+let last_slUsdc = 0n;
 let last_mwWeth = 0n;
 let last_mwUsdc = 0n;
 
@@ -650,13 +652,17 @@ async function refreshBalances() {
 
       last_swWeth = swWeth;
       last_svWeth = svWeth;
+      last_slWeth = slWeth;
       last_swUsdc = swUsdc;
       last_svUsdc = svUsdc;
+      last_slUsdc = slUsdc;
     } else {
       last_swWeth = 0n;
       last_svWeth = 0n;
+      last_slWeth = 0n;
       last_swUsdc = 0n;
       last_svUsdc = 0n;
+      last_slUsdc = 0n;
     }
 
     updateStealthFlowUI();
@@ -1338,10 +1344,27 @@ async function loadUserOrders() {
              Stealth
            </span>` : "";
 
+      // Build remaining locked display for partial fills.
+      // We show the total locked balance of the stealth address as the best
+      // available approximation (we can't split per-order since amounts are encrypted).
+      const remainingLine = (() => {
+        if (!isPartialFill) return "";
+        const isWethOrder = o.tokenIn.toLowerCase() === CWETH_ADDRESS.toLowerCase();
+        const rawLocked = o.isStealth
+          ? (isWethOrder ? last_slWeth : last_slUsdc)
+          : 0n; // non-stealth: locked balance not separately cached yet
+        if (rawLocked === 0n) return "";
+        const fmt = isWethOrder
+          ? `${formatToken(rawLocked, 18)} cWETH`
+          : `${formatToken(rawLocked, 6, 2)} cUSDC`;
+        return `<span class="partial-remaining">${fmt} still locked</span>`;
+      })();
+
       const partialNote = isPartialFill ? `
         <div class="order-partial-note">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l2 2"/></svg>
-          Partially filled — remaining amount still locked &amp; active in the matching engine.
+          <span>Partially filled — remaining amount still locked &amp; active in the matching engine.${remainingLine ? " &nbsp;" : ""}</span>
+          ${remainingLine}
         </div>` : "";
 
       const body = `
@@ -1360,18 +1383,21 @@ async function loadUserOrders() {
           ${partialNote}
         </div>`;
 
-      // cancelOrder exige msg.sender == owner : pas de variante relayée, donc
-      // pas d'annulation gasless possible pour un ordre furtif (l'adresse n'a pas d'ETH).
-      const footer = status !== "pending" ? "" : o.isStealth
-        ? `<div class="order-stealth-note">Cancel unavailable for stealth orders (requires gas from the stealth address)</div>`
-        : `
+      // cancelOrder requires msg.sender == owner, so gasless cancel is impossible
+      // for stealth orders (the stealth address has no ETH). For non-stealth orders,
+      // cancel also works on partial fills to recover the remaining locked amount.
+      const canCancel = (status === "pending" || status === "partial") && !o.isStealth;
+      const footer = canCancel
+        ? `
         <button class="btn-cancel" onclick="handleCancelOrder(${idStr})">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
           </svg>
-          Cancel Order
-        </button>`;
-
+          ${status === "partial" ? "Cancel &amp; recover remaining" : "Cancel Order"}
+        </button>`
+        : (status === "pending" || status === "partial") && o.isStealth
+          ? `<div class="order-stealth-note">Cancel unavailable for stealth orders (requires gas from the stealth address)</div>`
+          : "";
       return `
       <div class="order-card ${status === "filled" ? "order-settled" : status === "partial" ? "order-partial" : status === "cancelled" ? "order-settled" : ""}">
         <div class="order-top">
