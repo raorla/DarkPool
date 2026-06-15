@@ -1,0 +1,33 @@
+# Environment files
+.env
+.env*.local
+
+# Node dependencies
+node_modules/
+
+# Compilation / Build outputs
+dist/
+dist-server/
+out/
+
+# Hardhat build artifacts
+artifacts/
+cache/
+typechain/
+typechain-types/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / Editor temporary files
+.DS_Store
+.vscode/
+.idea/
+.claude/
+.gemini/
+
+# Temporary binaries
+*.bin
