@@ -53,7 +53,7 @@ graph TD
 Pour éviter le besoin d'un bridge, le protocole utilise des wrappers on-chain (`cWETH`, `cUSDC`). L'utilisateur dépose des jetons publics et reçoit en retour des jetons chiffrés sous forme de `euint256`. Les balances et les transferts de ces jetons sont invisibles pour les observateurs extérieurs.
 
 ### B. Le TEE Matching Engine (Moteur d'Appariement en Enclave)
-Le moteur d’appariement s’exécute au sein d’une enclave matérielle sécurisée (ex: Intel SGX). 
+Le moteur d’appariement s’exécute au sein d’une enclave matérielle sécurisée (ex: Intel TDX). 
 1. L'enclave interroge la blockchain et récupère les ordres soumis (qui contiennent des valeurs chiffrées).
 2. Elle obtient la clé de déchiffrement temporaire auprès du Nox KMS (uniquement si les règles d'accès sont valides).
 3. Elle déchiffre les montants en mémoire sécurisée (invisible pour l'hébergeur du serveur).
