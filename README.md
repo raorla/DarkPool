@@ -1,131 +1,69 @@
-# MVP Dark Pool Décentralisé sur iExec Nox (Sepolia Testnet)
+# DarkPool
 
-Ce projet fournit un MVP complet et prêt pour la production d'un **Dark Pool Décentralisé** exploitant la technologie de calcul confidentiel (TEE - Intel TDX) d'**iExec Nox** sur le testnet Ethereum Sepolia.
+**A decentralized dark pool for Ethereum: orders stay encrypted, matching happens inside a hardware enclave, and neither the amount nor the trader shows up on-chain.**
 
-Il contient :
-1. Un smart contract Solidity (`DarkPoolVault.sol`) robuste avec protection contre la réentrance et le rejeu.
-2. Un wrapper de token confidentiel (`ConfidentialToken.sol`, ex: cWETH/cUSDC) pour des dépôts/retraits 100% confidentiels (P0.3).
-3. Une application de moteur d'appariement confidentiel en enclave TEE (`src/enclave/index.ts`).
-4. Un script client d'envoi d'ordres chiffrés (`src/client/index.ts`).
-5. Un client de trading furtif (`src/client/stealth.ts`) et son relayer (`src/relayer/index.ts`) : adresses jetables + meta-transactions sans gas (P0.4).
+![Solidity](https://img.shields.io/badge/Solidity-363636?style=flat-square&logo=solidity&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![TEE](https://img.shields.io/badge/TEE-Intel%20TDX-0071C5?style=flat-square&logo=intel&logoColor=white)
+![Network](https://img.shields.io/badge/network-Sepolia-3C3C3D?style=flat-square&logo=ethereum&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-47%20passing-2ea44f?style=flat-square)
 
----
-
-## Fonctionnalités Clés & Sécurité
-
-*   **Chiffrement de bout en bout (ECIES)** : Les ordres ne sont jamais transmis en clair sur le réseau ou sur la blockchain. Le client chiffre l'ordre avant son envoi en utilisant la clé publique de l'enclave.
-*   **Calcul Confidentiel (Intel TDX)** : L'enclave s'exécute off-chain au sein d'un environnement matériellement isolé et sécurisé (TEE). Le carnet d'ordres et les prix limites restent invisibles en dehors de la mémoire protégée de l'enclave.
-*   **Protection Anti-Rejeu (Replay Protection)** :
-    *   **Multi-contrats/réseaux** : Les signatures de règlement générées par l'enclave intègrent le `chainId` de la chaîne cible et l'adresse physique du contrat `DarkPoolVault`.
-    *   **Rejeu de règlement** : Le contrat conserve l'historique des correspondances à travers un hachage unique contenant un `salt` généré aléatoirement.
-*   **Vérification de Solvabilité** : Le contrat gère les fonds on-chain et effectue les débits de manière transactionnelle sécurisée via les fonctions de soustraction natives de Solidity (revert automatique si solde insuffisant).
-*   **Dépôts/Retraits confidentiels (P0.3)** : via le wrapper `ConfidentialToken` (cWETH/cUSDC), les flux d'entrée/sortie du Dark Pool sont des transferts chiffrés (`euint256`) — aucun montant n'apparaît sur Etherscan. Le retrait confidentiel est synchrone (couverture vérifiée sur chiffrés, sans enclave). L'unwrap vers l'ERC-20 public se finalise avec une preuve de décryption KMS vérifiée on-chain.
-*   **Trading Furtif (P0.4)** : adresses jetables dérivées de façon déterministe du wallet principal + meta-transactions relayées (`*For` / `*WithSig`). L'adresse furtive ne détient jamais d'ETH (le relayer paie le gas) et le wallet principal n'apparaît jamais côté trading : le wrapper confidentiel masque le « combien », le couple stealth/relayer masque le « qui ».
+> 🇫🇷 Version française : [README.fr.md](./README.fr.md)
 
 ---
 
-## Structure du Workspace
+## Why
+
+On public blockchains every order, balance and trading intent is visible. Traders lose money to front-running bots (MEV), and anyone can follow a wallet's strategy. In traditional finance, dark pools handle 10 to 15 % of equity volume for exactly this reason. In DeFi, that volume is close to zero.
+
+DarkPool is an MVP that brings private order matching to Ethereum, using **iExec Nox** confidential computing (TEE on Intel TDX, plus a decentralized KMS).
+
+## How it works
+
+1. **The order is encrypted on the client** with the enclave's public key (ECIES). It never travels in clear text, on the network or on-chain.
+2. **The matching engine runs inside a TEE.** The order book and limit prices only exist in protected memory.
+3. **Settlement happens on-chain** in the `DarkPoolVault` contract, from a signature produced by the enclave.
+4. **Deposits and withdrawals are confidential:** a `ConfidentialToken` wrapper (cWETH, cUSDC) moves encrypted amounts (`euint256`), so no amount appears on Etherscan. Unwrapping back to the public ERC-20 is finalized with a KMS decryption proof verified on-chain.
+5. **Stealth trading:** throwaway addresses derived deterministically from the main wallet, plus gasless meta-transactions sent through a relayer. The stealth address never holds ETH and the main wallet never appears on the trading side.
+
+> The confidential wrapper hides the **how much**. The stealth address and relayer hide the **who**.
+
+## Security
+
+- **Replay protection:** enclave settlement signatures include the target `chainId` and the vault address, and every match is stored under a unique salted hash.
+- **Reentrancy protection** on the vault.
+- **Solvency checks:** balances are debited transactionally with Solidity's checked arithmetic, which reverts on insufficient funds.
+
+## Project layout
 
 ```text
-├── contracts/
-│   ├── DarkPoolVault.sol    # Smart Contract principal (v3.2)
-│   └── ConfidentialToken.sol # Wrapper de token confidentiel Nox (cWETH/cUSDC)
-├── src/
-│   ├── client/
-│   │   ├── index.ts         # Script d'envoi et chiffrement d'ordres client (CLI)
-│   │   └── stealth.ts       # Client furtif : stealth addresses + signatures meta-tx
-│   ├── enclave/
-│   │   └── index.ts         # Moteur de matching confidentiel en TEE
-│   ├── relayer/
-│   │   └── index.ts         # Relayer HTTP des meta-transactions (paie le gas)
-│   └── frontend/
-│       ├── app.ts           # Logique Web3 interactive du dashboard
-│       └── style.css        # Styles CSS sombres et premium
-├── index.html               # Page d'accueil du dashboard Web3
-├── package.json             # Dépendances et scripts de build
-├── tsconfig.json            # Configuration TypeScript
-├── .env.example             # Modèle de configuration des variables d'environnement
-└── README.md                # Guide d'utilisation
+contracts/
+  DarkPoolVault.sol       main vault and settlement (v3.2)
+  ConfidentialToken.sol   confidential token wrapper (cWETH / cUSDC)
+src/
+  client/index.ts         CLI that encrypts and submits orders
+  client/stealth.ts       stealth addresses and meta-transaction signatures
+  enclave/index.ts        confidential matching engine (TEE)
+  relayer/index.ts        HTTP relayer for meta-transactions (pays the gas)
+  frontend/               Web3 dashboard
+test/                     Hardhat tests (vault, confidential flows)
+scripts/                  deploy and end-to-end Sepolia scenarios
 ```
 
----
+## Quick start
 
-## Installation & Configuration
+```bash
+npm install
+cp .env.example .env         # Sepolia RPC, signer key, enclave ECIES keys, vault address
+npx hardhat compile
+npm test                     # Hardhat tests
+npm run dev                  # Web3 dashboard on http://localhost:5173 (MetaMask on Sepolia)
+npm run enclave              # confidential matching engine
+npm run relayer              # gasless relayer for stealth trading
+```
 
-1. **Installer les dépendances** :
-   ```bash
-   npm install
-   ```
+The full confidential scenario runs against Sepolia with `npm run build && npm run e2e:confidential`: wrap, confidential transfer to the stealth address, relayed deposit and order, match by the enclave, synchronous confidential withdrawal, then unwrap with a KMS proof verified on-chain.
 
-2. **Configurer les variables d'environnement** :
-   Copiez le fichier `.env.example` et nommez-le `.env` :
-   ```bash
-   cp .env.example .env
-   ```
-   Remplissez ensuite les variables requises (URL RPC Sepolia, clé de signature, clés ECIES de l'enclave et adresse du vault).
+## Status
 
----
-
-## Compilation & Construction (Build)
-
-*   **Compiler le Smart Contract Solidity** :
-    ```bash
-    npx hardhat compile
-    ```
-
-*   **Déployer le Smart Contract Solidity (Sepolia)** :
-    ```bash
-    npx hardhat run scripts/deploy.ts --network sepolia
-    ```
-
-*   **Compiler le Code TypeScript (Client et Enclave)** :
-    ```bash
-    npm run build
-    ```
-
-*   **Compiler le Frontend Web3 pour la Production** :
-    ```bash
-    npm run build:frontend
-    ```
-
----
-
-## Exécution
-
-1. **Lancer le serveur de développement Frontend local** :
-   ```bash
-   npm run dev
-   ```
-   Ouvrez ensuite le lien fourni (ex: `http://localhost:5173`) dans votre navigateur contenant MetaMask (connecté à Sepolia).
-
-2. **Lancer le Matching Engine Confidentiel (Enclave)** :
-   ```bash
-   npm run enclave
-   ```
-
-3. **Soumettre un Ordre Chiffré via le client CLI (Optionnel)** :
-   ```bash
-   npm run client
-   ```
-
-4. **Test E2E confidentiel sur Sepolia (P0.3 + P0.4)** :
-   ```bash
-   npm run build          # compile les helpers du client furtif
-   npm run e2e:confidential
-   ```
-   Rejoue le scénario furtif complet contre Sepolia : wrap → transfert confidentiel vers
-   l'adresse furtive → dépôt/ordre relayés (gasless) → match par l'enclave → retrait
-   confidentiel synchrone → unwrap avec preuve de décryption KMS vérifiée on-chain.
-   Prérequis : vault v3.2 + wrappers déployés (`VAULT_ADDRESS`, `CWETH_ADDRESS`,
-   `CUSDC_ADDRESS` dans le `.env`), enclave lancée, wallet financé (voir l'en-tête du
-   script). Le test E2E historique v3.1 reste disponible via `npm run e2e`.
-
-5. **Lancer le Relayer du client furtif (P0.4, Optionnel)** :
-   ```bash
-   npm run relayer
-   ```
-   Variables requises : `RELAYER_PRIVATE_KEY` (wallet financé qui paie le gas),
-   `VAULT_ADDRESS`, `CTOKEN_ADDRESSES` (adresses cWETH/cUSDC séparées par des virgules),
-   `RELAYER_PORT` (optionnel, défaut 9545). Endpoint : `POST /relay`
-   avec `{ action, params }` — voir `src/client/stealth.ts` pour la construction et la
-   signature des meta-transactions côté client.
+MVP on the Sepolia testnet. Not audited, do not use with real funds.
